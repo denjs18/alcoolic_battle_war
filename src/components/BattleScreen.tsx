@@ -7,6 +7,8 @@ import {
   cellKey, isShipSunk, PlacedShip,
 } from "@/types/game";
 import { fireShot } from "@/lib/gameService";
+import { gameAudio } from "@/lib/sounds";
+import SoundSettings from "./SoundSettings";
 
 // ── Timing constants (ms) ─────────────────────────────────────────────────────
 const TARGETING_MS  = 1600; // crosshair animation before impact
@@ -55,12 +57,18 @@ export default function BattleScreen({ game, gameId, myTeam }: BattleScreenProps
     const key = cellKey(cell);
     if (myShots[key]) return;
 
+    // Unlock audio on iOS (must be called from user gesture)
+    await gameAudio?.resume();
+
     // Lock attack view for entire animation sequence
     setForcedView("attack");
     setTargetingCell(key);
     setResultLabel(null);
     setAnimAttack(null);
     setWaveSource(null);
+
+    // Cannon shot sound at the moment of firing
+    gameAudio?.playShot();
 
     // Fire to server + minimum crosshair duration run in parallel
     const [result] = await Promise.all([
@@ -75,6 +83,10 @@ export default function BattleScreen({ game, gameId, myTeam }: BattleScreenProps
       setForcedView(null);
       return;
     }
+
+    // Play impact sound
+    if (result === "hit") gameAudio?.playExplosion();
+    else gameAudio?.playSplash();
 
     setResultLabel(result);
     setAnimAttack({ key, result });
@@ -107,9 +119,11 @@ export default function BattleScreen({ game, gameId, myTeam }: BattleScreenProps
 
     let t1: NodeJS.Timeout, t2: NodeJS.Timeout, t3: NodeJS.Timeout, t4: NodeJS.Timeout;
 
-    // 1. Full-screen incoming overlay (1.3s)
+    // 1. Full-screen incoming overlay (1.3s) + incoming sound
     setIncomingOverlay(ls);
     setForcedView("defense");
+    if (ls.result === "hit") gameAudio?.playExplosion();
+    else gameAudio?.playSplash();
 
     t1 = setTimeout(() => {
       setIncomingOverlay(null);
@@ -134,6 +148,21 @@ export default function BattleScreen({ game, gameId, myTeam }: BattleScreenProps
 
     return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4); };
   }, [game.lastShot, myTeam]);
+
+  // ── Ambient music: start when playing, stop on unmount ───────────────────
+  useEffect(() => {
+    if (game.status === "playing") gameAudio?.startAmbient();
+    return () => { if (game.status === "finished") gameAudio?.stopAmbient(); };
+  }, [game.status]);
+
+  // ── Ship sunk sound ───────────────────────────────────────────────────────
+  const prevSunkCount = useRef(0);
+  useEffect(() => {
+    const sunk = opponentData.ships.filter((s: PlacedShip) => isShipSunk(s, myShots)).length;
+    if (sunk > prevSunkCount.current) gameAudio?.playShipSunk();
+    prevSunkCount.current = sunk;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myShots]);
 
   // ── Computed sets ─────────────────────────────────────────────────────────
   const myShipCells = useMemo(
@@ -225,18 +254,20 @@ export default function BattleScreen({ game, gameId, myTeam }: BattleScreenProps
 
       {/* Header */}
       <div className="flex-shrink-0 px-4 pt-4 pb-2 space-y-2">
-        {/* Turn indicator */}
-        <div className={`rounded-xl px-4 py-3 text-center border transition-all duration-700 ${
-          isMyTurn
-            ? "bg-emerald-950/60 border-emerald-700 animate-turn-alert"
-            : "bg-red-950/40 border-red-900"
-        }`}>
-          {isMyTurn
-            ? <p className="text-emerald-300 font-black text-lg tracking-widest animate-alert-flash">🎯 À VOUS DE JOUER</p>
-            : <p className="text-red-500 font-bold text-base tracking-widest">⏳ {opponentData.name} vise...</p>
-          }
+        {/* Turn indicator row with sound settings */}
+        <div className="flex items-center gap-2">
+          <div className={`flex-1 rounded-xl px-4 py-3 text-center border transition-all duration-700 ${
+            isMyTurn
+              ? "bg-emerald-950/60 border-emerald-700 animate-turn-alert"
+              : "bg-red-950/40 border-red-900"
+          }`}>
+            {isMyTurn
+              ? <p className="text-emerald-300 font-black text-lg tracking-widest animate-alert-flash">🎯 À VOUS DE JOUER</p>
+              : <p className="text-red-500 font-bold text-base tracking-widest">⏳ {opponentData.name} vise...</p>
+            }
+          </div>
+          <SoundSettings />
         </div>
-
         {/* Score */}
         <div className="flex justify-between px-1 text-xs font-mono text-slate-500">
           <span className="text-cyan-700 font-bold">{myData.name}</span>
