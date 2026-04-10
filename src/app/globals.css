@@ -2,56 +2,241 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── Naval war theme ──────────────────────────────────────────────────────── */
 :root {
-  --bg: #0a1628;
+  --ocean-deepest: #040d1e;
+  --ocean-deep: #0a1628;
+  --ocean-mid: #0d2240;
+  --ocean-light: #1a3a5c;
+  --radar-green: #22c55e;
+  --danger-red: #ef4444;
+  --amber: #f59e0b;
+  --cyan: #06b6d4;
 }
 
-html,
-body {
-  background-color: var(--bg);
+html, body {
+  background-color: var(--ocean-deepest);
   color: #e2e8f0;
   min-height: 100dvh;
   overscroll-behavior: none;
+  font-family: 'Courier New', Courier, monospace;
 }
 
-/* Prevent tap highlight on mobile */
-* {
-  -webkit-tap-highlight-color: transparent;
+* { -webkit-tap-highlight-color: transparent; }
+
+/* ─── Animated ocean background ──────────────────────────────────────────── */
+.ocean-bg {
+  background:
+    radial-gradient(ellipse at 20% 50%, rgba(6, 182, 212, 0.04) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 20%, rgba(34, 197, 94, 0.03) 0%, transparent 50%),
+    var(--ocean-deepest);
 }
 
-/* Grid cells */
+/* ─── Grid cells ──────────────────────────────────────────────────────────── */
 .cell {
-  @apply flex items-center justify-center rounded-sm cursor-pointer select-none transition-colors duration-100;
+  @apply flex items-center justify-center rounded-sm select-none transition-all duration-150 relative overflow-hidden;
+  cursor: default;
 }
 
 .cell-ocean {
-  @apply bg-ocean-mid border border-ocean-light;
+  background: #0a1f3d;
+  border: 1px solid #1a3a5c;
+}
+
+.cell-ocean-active {
+  background: #0a1f3d;
+  border: 1px solid #06b6d4;
+  cursor: crosshair;
+}
+
+.cell-ocean-active:active {
+  background: #0e2a4a;
 }
 
 .cell-ship {
-  @apply bg-slate-500 border border-slate-400;
+  background: #334155;
+  border: 1px solid #475569;
 }
 
 .cell-hit {
-  @apply bg-red-600 border border-red-400;
+  background: #7f1d1d;
+  border: 1px solid #ef4444;
 }
 
 .cell-miss {
-  @apply bg-slate-700 border border-slate-500;
+  background: #1e293b;
+  border: 1px solid #334155;
 }
 
 .cell-sunk {
-  @apply bg-red-900 border border-red-700;
+  background: #450a0a;
+  border: 1px solid #b91c1c;
 }
 
 .cell-preview {
-  @apply bg-cyan-600 border border-cyan-400 opacity-70;
+  background: rgba(6, 182, 212, 0.35);
+  border: 1px solid #06b6d4;
 }
 
 .cell-preview-invalid {
-  @apply bg-red-800 border border-red-600 opacity-70;
+  background: rgba(239, 68, 68, 0.35);
+  border: 1px solid #ef4444;
 }
 
-.cell-hover {
-  @apply bg-ocean-surface border border-cyan-500;
+/* ─── Targeting animation ─────────────────────────────────────────────────── */
+.cell-targeting {
+  background: #7f1d1d;
+  border: 2px solid #ef4444;
+  animation: targeting-pulse 0.4s infinite alternate;
+  cursor: wait;
+  z-index: 2;
+}
+
+.cell-targeting::before,
+.cell-targeting::after {
+  content: '';
+  position: absolute;
+  background: #ef4444;
+}
+
+.cell-targeting::before {
+  width: 100%;
+  height: 1px;
+  top: 50%;
+  left: 0;
+  animation: crosshair-blink 0.4s infinite alternate;
+}
+
+.cell-targeting::after {
+  height: 100%;
+  width: 1px;
+  left: 50%;
+  top: 0;
+  animation: crosshair-blink 0.4s infinite alternate;
+}
+
+/* ─── Explosion (hit result) ──────────────────────────────────────────────── */
+.cell-exploding {
+  background: #7f1d1d;
+  border: 1px solid #ef4444;
+  animation: explode 0.7s ease-out forwards;
+}
+
+/* ─── Splash (miss result) ────────────────────────────────────────────────── */
+.cell-splashing {
+  background: #1e293b;
+  border: 1px solid #334155;
+  animation: splash-in 0.6s ease-out forwards;
+}
+
+/* ─── Keyframes ───────────────────────────────────────────────────────────── */
+@keyframes targeting-pulse {
+  from { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.8), inset 0 0 8px rgba(239, 68, 68, 0.3); }
+  to   { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0), inset 0 0 16px rgba(239, 68, 68, 0.5); }
+}
+
+@keyframes crosshair-blink {
+  from { opacity: 1; }
+  to   { opacity: 0.2; }
+}
+
+@keyframes explode {
+  0%   { transform: scale(0.8); background: #fbbf24; box-shadow: 0 0 0 0 rgba(251,191,36,0.9); }
+  30%  { transform: scale(1.15); background: #ef4444; box-shadow: 0 0 0 8px rgba(239,68,68,0.4); }
+  60%  { transform: scale(1.05); background: #b91c1c; box-shadow: 0 0 0 4px rgba(185,28,28,0.2); }
+  100% { transform: scale(1);    background: #7f1d1d; box-shadow: none; }
+}
+
+@keyframes splash-in {
+  0%   { transform: scale(0.6); background: #0ea5e9; box-shadow: 0 0 0 0 rgba(14,165,233,0.8); }
+  40%  { transform: scale(1.1); background: #0284c7; box-shadow: 0 0 0 6px rgba(14,165,233,0.3); }
+  100% { transform: scale(1);   background: #1e293b; box-shadow: none; }
+}
+
+@keyframes slide-up {
+  from { transform: translateY(30px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+@keyframes slide-down {
+  from { transform: translateY(-30px); opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes alert-flash {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  15%       { transform: translateX(-6px) rotate(-1deg); }
+  30%       { transform: translateX(6px)  rotate(1deg); }
+  45%       { transform: translateX(-4px); }
+  60%       { transform: translateX(4px); }
+  75%       { transform: translateX(-2px); }
+}
+
+@keyframes radar-ping {
+  0%   { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+
+@keyframes turn-alert {
+  0%   { box-shadow: 0 0 0 0 rgba(34,197,94,0.6); }
+  70%  { box-shadow: 0 0 0 16px rgba(34,197,94,0); }
+  100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+}
+
+@keyframes incoming-alert {
+  0%   { box-shadow: 0 0 0 0 rgba(239,68,68,0.8); }
+  70%  { box-shadow: 0 0 0 20px rgba(239,68,68,0); }
+  100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+}
+
+@keyframes drift {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-4px); }
+}
+
+@keyframes scanline {
+  from { background-position: 0 0; }
+  to   { background-position: 0 100%; }
+}
+
+/* ─── Utility animation classes ───────────────────────────────────────────── */
+.animate-slide-up   { animation: slide-up   0.35s ease-out both; }
+.animate-slide-down { animation: slide-down 0.35s ease-out both; }
+.animate-fade-in    { animation: fade-in    0.3s ease both; }
+.animate-shake      { animation: shake      0.5s ease; }
+.animate-drift      { animation: drift      3s ease-in-out infinite; }
+.animate-alert-flash{ animation: alert-flash 0.6s ease infinite; }
+
+.animate-turn-alert    { animation: turn-alert    1.5s ease infinite; }
+.animate-incoming-alert{ animation: incoming-alert 0.8s ease infinite; }
+
+/* ─── Scanline overlay (optional retro CRT feel) ─────────────────────────── */
+.scanlines::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 3px,
+    rgba(0,0,0,0.08) 3px,
+    rgba(0,0,0,0.08) 4px
+  );
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ─── Drink alert shake ───────────────────────────────────────────────────── */
+.drink-shake {
+  animation: shake 0.5s ease 0.3s 3;
 }

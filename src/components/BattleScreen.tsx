@@ -1,8 +1,11 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import Grid from "./Grid";
-import { GameData, TeamId, Cell, cellKey, isShipSunk, PlacedShip } from "@/types/game";
+import {
+  GameData, TeamId, Cell, LastShot,
+  cellKey, isShipSunk, PlacedShip,
+} from "@/types/game";
 import { fireShot } from "@/lib/gameService";
 
 interface BattleScreenProps {
@@ -11,188 +14,316 @@ interface BattleScreenProps {
   myTeam: TeamId;
 }
 
-export default function BattleScreen({ game, gameId, myTeam }: BattleScreenProps) {
-  const [tab, setTab] = useState<"attack" | "defense">("attack");
-  const [firing, setFiring] = useState(false);
+type AnimatingCell = { key: string; result: "hit" | "miss" } | null;
 
+export default function BattleScreen({ game, gameId, myTeam }: BattleScreenProps) {
   const opponentTeam: TeamId = myTeam === "team1" ? "team2" : "team1";
   const myData = game[myTeam];
   const opponentData = game[opponentTeam];
 
-  // Shots I fired at opponent
-  const myShotsField = myTeam === "team1" ? "byTeam1" : "byTeam2";
-  const myShots = game.shots[myShotsField];
-
-  // Shots opponent fired at me
-  const opponentShotsField = myTeam === "team1" ? "byTeam2" : "byTeam1";
-  const opponentShots = game.shots[opponentShotsField];
+  const myShotsField   = myTeam === "team1" ? "byTeam1" : "byTeam2";
+  const oppShotsField  = myTeam === "team1" ? "byTeam2" : "byTeam1";
+  const myShots        = game.shots[myShotsField];
+  const opponentShots  = game.shots[oppShotsField];
 
   const isMyTurn = game.currentTurn === myTeam;
 
-  // My ship cells
+  // ── View logic ─────────────────────────────────────────────────────────────
+  // Base view = attack when my turn, defense when opponent's turn.
+  // forcedView overrides temporarily (e.g. show defense right after incoming hit).
+  const [forcedView, setForcedView] = useState<"attack" | "defense" | null>(null);
+  const currentView = forcedView ?? (isMyTurn ? "attack" : "defense");
+
+  // ── Shot animations (shooter side) ─────────────────────────────────────────
+  const [targetingCell, setTargetingCell] = useState<string | null>(null);
+  const [animAttack, setAnimAttack]       = useState<AnimatingCell>(null);
+
+  // ── Incoming attack animations (receiver side) ──────────────────────────────
+  const [incomingOverlay, setIncomingOverlay] = useState<LastShot | null>(null);
+  const [incomingCell, setIncomingCell]       = useState<string | null>(null);
+  const [animDefense, setAnimDefense]         = useState<AnimatingCell>(null);
+  const lastSeenShot = useRef<number>(0);
+
+  // ── Detect incoming attack ──────────────────────────────────────────────────
+  useEffect(() => {
+    const ls = game.lastShot;
+    if (!ls) return;
+    if (ls.timestamp <= lastSeenShot.current) return;
+    if (ls.shooter === myTeam) return; // it was MY shot, already handled
+    lastSeenShot.current = ls.timestamp;
+
+    const key = cellKey({ row: ls.row, col: ls.col });
+
+    // 1. Flash incoming overlay (1.2 s)
+    setIncomingOverlay(ls);
+    // 2. Force defense view during animation
+    setForcedView("defense");
+    setIncomingCell(key);
+
+    const t1 = setTimeout(() => setIncomingOverlay(null), 1200);
+    // 3. Play explosion/splash on defense grid
+    const t2 = setTimeout(() => {
+      setIncomingCell(null);
+      setAnimDefense({ key, result: ls.result });
+    }, 1200);
+    // 4. Clear explosion, return to normal view (it's now my turn)
+    const t3 = setTimeout(() => {
+      setAnimDefense(null);
+      setForcedView(null);
+    }, 2200);
+
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+  }, [game.lastShot, myTeam]);
+
+  // ── Fire a shot ─────────────────────────────────────────────────────────────
+  const handleShot = useCallback(async (cell: Cell) => {
+    if (!isMyTurn || targetingCell) return;
+    const key = cellKey(cell);
+    if (myShots[key]) return;
+
+    // Start targeting animation
+    setTargetingCell(key);
+
+    // Fire to server
+    await fireShot(gameId, myTeam, cell);
+
+    // We'll detect the result via the next game state update in the parent.
+    // For immediate local feedback, schedule the result animation after a short delay.
+    // The actual result is in the incoming game prop update.
+    const t = setTimeout(() => {
+      setTargetingCell(null);
+      // result will be in myShots after state update — detect it
+    }, 800);
+    return () => clearTimeout(t);
+  }, [isMyTurn, targetingCell, myShots, gameId, myTeam]);
+
+  // ── Detect result of MY shot ────────────────────────────────────────────────
+  const prevMyShots = useRef<Record<string, "hit" | "miss">>({});
+  useEffect(() => {
+    const prev = prevMyShots.current;
+    const newKeys = Object.keys(myShots).filter((k) => !prev[k]);
+    if (newKeys.length > 0 && targetingCell && newKeys.includes(targetingCell)) {
+      const result = myShots[targetingCell];
+      setTargetingCell(null);
+      setAnimAttack({ key: targetingCell, result });
+      const t = setTimeout(() => setAnimAttack(null), 800);
+      prevMyShots.current = myShots;
+      return () => clearTimeout(t);
+    }
+    prevMyShots.current = myShots;
+  }, [myShots, targetingCell]);
+
+  // ── Computed sets ───────────────────────────────────────────────────────────
   const myShipCells = useMemo(
     () => new Set(myData.ships.flatMap((s: PlacedShip) => s.cells.map(cellKey))),
     [myData.ships]
   );
 
-  // Opponent sunk cells (for attack grid display)
   const opponentSunkCells = useMemo(() => {
     const sunk = new Set<string>();
-    for (const ship of opponentData.ships) {
-      if (isShipSunk(ship, myShots)) {
+    for (const ship of opponentData.ships)
+      if (isShipSunk(ship, myShots))
         ship.cells.forEach((c) => sunk.add(cellKey(c)));
-      }
-    }
     return sunk;
   }, [opponentData.ships, myShots]);
 
-  // My sunk cells (for defense grid)
   const mySunkCells = useMemo(() => {
     const sunk = new Set<string>();
-    for (const ship of myData.ships) {
-      if (isShipSunk(ship, opponentShots)) {
+    for (const ship of myData.ships)
+      if (isShipSunk(ship, opponentShots))
         ship.cells.forEach((c) => sunk.add(cellKey(c)));
-      }
-    }
     return sunk;
   }, [myData.ships, opponentShots]);
 
   const alreadyShotCells = useMemo(() => new Set(Object.keys(myShots)), [myShots]);
 
-  async function handleShot(cell: Cell) {
-    if (!isMyTurn || firing) return;
-    if (alreadyShotCells.has(cellKey(cell))) return;
-    setFiring(true);
-    try {
-      await fireShot(gameId, myTeam, cell);
-    } finally {
-      setFiring(false);
-    }
-  }
+  const myHits    = Object.values(myShots).filter((v) => v === "hit").length;
+  const totalOpp  = opponentData.ships.reduce((a: number, s: PlacedShip) => a + s.size, 0);
 
-  const myScore = Object.values(myShots).filter((v) => v === "hit").length;
-  const totalOpponentCells = opponentData.ships.reduce((acc: number, s: PlacedShip) => acc + s.size, 0);
-
-  return (
-    <div className="flex flex-col min-h-dvh">
-      {/* Header */}
-      <div className={`p-4 text-center border-b border-slate-700 ${isMyTurn ? "bg-cyan-900/30" : "bg-slate-900/30"}`}>
-        {game.status === "finished" ? (
-          <div>
-            <span className="text-2xl font-black text-yellow-400">
-              {game.winner === myTeam ? "VICTOIRE !" : "DÉFAITE..."}
-            </span>
-            <p className="text-slate-400 text-sm mt-1">
-              {game.winner === myTeam
-                ? "Vous avez coulé tous les bateaux adverses"
-                : `${opponentData.name} a coulé tous vos bateaux`}
+  // ── Game over ───────────────────────────────────────────────────────────────
+  if (game.status === "finished") {
+    const won = game.winner === myTeam;
+    return (
+      <div className={`min-h-dvh flex flex-col items-center justify-center gap-6 p-6 text-center ocean-bg ${won ? "" : "animate-shake"}`}>
+        <div className="text-8xl animate-drift">{won ? "🏆" : "💀"}</div>
+        <div>
+          <h2 className={`text-4xl font-black tracking-widest ${won ? "text-yellow-400" : "text-red-400"}`}>
+            {won ? "VICTOIRE" : "DÉFAITE"}
+          </h2>
+          <p className="text-slate-400 mt-2 text-sm">
+            {won
+              ? "Vous avez coulé toute la flotte ennemie"
+              : `${opponentData.name} a coulé toute votre flotte`}
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-4 w-full max-w-xs text-sm">
+          <div className="bg-ocean-mid/60 rounded-xl p-4 border border-ocean-light">
+            <p className="text-slate-400 text-xs mb-1">VOS TOUCHES</p>
+            <p className="text-2xl font-black text-cyan-400">{myHits}/{totalOpp}</p>
+          </div>
+          <div className="bg-ocean-mid/60 rounded-xl p-4 border border-ocean-light">
+            <p className="text-slate-400 text-xs mb-1">FLOTTE</p>
+            <p className="text-2xl font-black text-amber-400">
+              {myData.ships.filter((s: PlacedShip) => !isShipSunk(s, opponentShots)).length}/{myData.ships.length}
             </p>
           </div>
-        ) : (
-          <div>
-            <span className={`text-lg font-black ${isMyTurn ? "text-cyan-300" : "text-slate-400"}`}>
-              {isMyTurn ? "A VOUS DE JOUER" : `Tour de ${opponentData.name}...`}
-            </span>
-            <div className="flex justify-center gap-6 mt-2 text-xs text-slate-400">
-              <span>Touchés : <strong className="text-white">{myScore}/{totalOpponentCells}</strong></span>
-              <span>{myData.name} vs {opponentData.name}</span>
-            </div>
+        </div>
+        <a href="/" className="mt-4 px-8 py-3 rounded-xl bg-cyan-700 font-bold text-white">
+          Nouvelle partie
+        </a>
+      </div>
+    );
+  }
+
+  // ── ROWS labels helper ──────────────────────────────────────────────────────
+  const ROW_LABELS = ["A","B","C","D","E","F","G","H","I","J"];
+
+  return (
+    <div className="flex flex-col min-h-dvh ocean-bg relative">
+
+      {/* ── INCOMING ATTACK overlay ─────────────────────────────────────── */}
+      {incomingOverlay && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-red-950/80 backdrop-blur-sm animate-fade-in pointer-events-none">
+          <div className="text-center animate-incoming-alert rounded-2xl p-8">
+            <div className="text-6xl mb-3">💥</div>
+            <p className="text-3xl font-black text-red-300 tracking-widest animate-alert-flash">
+              ATTAQUE !
+            </p>
+            <p className="text-red-400 mt-2 text-lg font-mono">
+              Case&nbsp;
+              <span className="text-white font-black">
+                {ROW_LABELS[incomingOverlay.row]}{incomingOverlay.col + 1}
+              </span>
+            </p>
+            <p className="mt-3 text-xl font-black">
+              {incomingOverlay.result === "hit"
+                ? <span className="text-red-300">TOUCHÉ 🔥</span>
+                : <span className="text-blue-300">À L&apos;EAU 🌊</span>}
+            </p>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Tabs */}
-      <div className="flex border-b border-slate-700">
-        <button
-          onClick={() => setTab("attack")}
-          className={`flex-1 py-3 text-sm font-bold transition-colors ${
-            tab === "attack"
-              ? "text-cyan-400 border-b-2 border-cyan-500 bg-cyan-900/20"
-              : "text-slate-400"
+      {/* ── Header ──────────────────────────────────────────────────────── */}
+      <div className="flex-shrink-0 px-4 pt-4 pb-2">
+        {/* Turn indicator */}
+        <div
+          className={`rounded-xl px-4 py-3 text-center border transition-all duration-500 ${
+            isMyTurn
+              ? "bg-emerald-950/60 border-emerald-600 animate-turn-alert"
+              : "bg-red-950/40 border-red-800"
           }`}
         >
-          ATTAQUE
-        </button>
-        <button
-          onClick={() => setTab("defense")}
-          className={`flex-1 py-3 text-sm font-bold transition-colors ${
-            tab === "defense"
-              ? "text-cyan-400 border-b-2 border-cyan-500 bg-cyan-900/20"
-              : "text-slate-400"
-          }`}
-        >
-          DÉFENSE
-        </button>
+          {isMyTurn ? (
+            <p className="text-emerald-300 font-black text-lg tracking-widest animate-alert-flash">
+              🎯 À VOUS DE JOUER
+            </p>
+          ) : (
+            <p className="text-red-400 font-bold text-base tracking-widest">
+              ⏳ {opponentData.name} vise...
+            </p>
+          )}
+        </div>
+
+        {/* Score bar */}
+        <div className="flex justify-between items-center mt-2 px-1 text-xs font-mono text-slate-500">
+          <span className="text-cyan-600">{myData.name}</span>
+          <span>
+            <span className="text-red-400 font-bold">{myHits}</span>
+            <span className="text-slate-600">/{totalOpp} touchés</span>
+          </span>
+          <span className="text-slate-600">{opponentData.name}</span>
+        </div>
       </div>
 
-      {/* Grid area */}
-      <div className="flex-1 p-3 flex flex-col gap-4">
-        {tab === "attack" ? (
+      {/* ── View label ──────────────────────────────────────────────────── */}
+      <div
+        key={currentView}
+        className="flex-shrink-0 text-center py-1 animate-slide-up"
+      >
+        <span className={`text-xs font-bold uppercase tracking-widest ${
+          currentView === "attack" ? "text-cyan-600" : "text-amber-600"
+        }`}>
+          {currentView === "attack"
+            ? `⚡ Grille ennemie — ${opponentData.name}`
+            : `🛡 Votre flotte — ${myData.name}`}
+        </span>
+      </div>
+
+      {/* ── Grid ────────────────────────────────────────────────────────── */}
+      <div key={currentView + "-grid"} className="flex-1 px-3 pb-2 flex flex-col gap-3 animate-slide-up">
+        {currentView === "attack" ? (
           <>
-            <div className="text-center text-xs text-slate-400 uppercase tracking-widest">
-              Grille de {opponentData.name}
-            </div>
             <Grid
               shots={myShots}
               sunkCells={opponentSunkCells}
               shotCells={alreadyShotCells}
-              onCellClick={isMyTurn && !firing ? handleShot : undefined}
-              disabled={!isMyTurn || firing}
+              targetingCell={targetingCell}
+              animatingCell={animAttack}
+              onCellClick={isMyTurn && !targetingCell ? handleShot : undefined}
+              disabled={!isMyTurn || !!targetingCell}
             />
-            <div className="flex flex-wrap gap-2 justify-center text-xs">
-              <span className="flex items-center gap-1">
-                <span className="w-4 h-4 rounded-sm bg-red-600 inline-block" /> Touché
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="w-4 h-4 rounded-sm bg-slate-700 inline-block" /> À l&apos;eau
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="w-4 h-4 rounded-sm bg-ocean-mid border border-ocean-light inline-block" /> Non tiré
-              </span>
-            </div>
-            {isMyTurn && !firing && game.status === "playing" && (
-              <p className="text-center text-cyan-400 text-sm font-bold animate-pulse">
-                Tapez une case pour tirer !
+
+            {isMyTurn && !targetingCell && (
+              <p className="text-center text-cyan-700 text-xs font-bold tracking-widest animate-alert-flash">
+                CHOISISSEZ UNE CASE ET TIREZ
               </p>
             )}
+            {targetingCell && (
+              <p className="text-center text-red-400 text-xs font-bold tracking-widest animate-alert-flash">
+                TIR EN COURS...
+              </p>
+            )}
+
+            {/* Legend */}
+            <div className="flex gap-4 justify-center text-xs font-mono text-slate-500">
+              <span className="flex items-center gap-1">
+                <span className="w-3 h-3 rounded-sm bg-red-900 border border-red-500 inline-block" />
+                Touché
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-3 h-3 rounded-sm bg-slate-800 border border-slate-600 inline-block" />
+                À l&apos;eau
+              </span>
+            </div>
           </>
         ) : (
           <>
-            <div className="text-center text-xs text-slate-400 uppercase tracking-widest">
-              Votre grille — {myData.name}
-            </div>
             <Grid
               shipCells={myShipCells}
               sunkCells={mySunkCells}
               shots={opponentShots}
+              incomingCell={incomingCell ?? undefined}
+              animatingCell={animDefense}
               disabled
             />
-            <div className="flex flex-col gap-2 mt-2">
+
+            {/* Fleet status */}
+            <div className="flex flex-col gap-1.5 mt-1">
               {myData.ships.map((ship: PlacedShip) => {
                 const sunk = isShipSunk(ship, opponentShots);
-                const hits = ship.cells.filter((c) => opponentShots[cellKey(c)] === "hit").length;
                 return (
                   <div
                     key={ship.id}
-                    className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm ${
-                      sunk ? "bg-red-900/50 border border-red-700" : "bg-ocean-mid border border-ocean-light"
+                    className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-all ${
+                      sunk
+                        ? "bg-red-950/50 border border-red-800"
+                        : "bg-ocean-mid/60 border border-ocean-light"
                     }`}
                   >
-                    <span className={sunk ? "text-red-300 line-through" : "text-slate-200"}>
-                      {ship.name}
+                    <span className={`font-bold font-mono ${sunk ? "text-red-400 line-through" : "text-slate-200"}`}>
+                      {sunk ? "💥" : "🚢"} {ship.name}
                     </span>
-                    <span className="flex items-center gap-2">
+                    <span className="flex items-center gap-1">
                       {ship.cells.map((c, i) => (
                         <span
                           key={i}
-                          className={`w-4 h-4 rounded-sm ${
-                            opponentShots[cellKey(c)] === "hit"
-                              ? "bg-red-600"
-                              : "bg-slate-500"
+                          className={`w-3.5 h-3.5 rounded-sm transition-colors ${
+                            opponentShots[cellKey(c)] === "hit" ? "bg-red-600" : "bg-slate-500"
                           }`}
                         />
                       ))}
-                      <span className="text-shot text-xs ml-1">{ship.size}🥃</span>
+                      <span className="text-amber-500 ml-1">{ship.size}🥃</span>
                     </span>
                   </div>
                 );

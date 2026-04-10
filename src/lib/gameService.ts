@@ -5,6 +5,7 @@ import {
   PlacedShip,
   Cell,
   DrinkNotification,
+  LastShot,
   ShotResult,
   cellKey,
   getOpponent,
@@ -27,6 +28,7 @@ interface GameRow {
   shots_by_team1: Record<string, ShotResult>;
   shots_by_team2: Record<string, ShotResult>;
   drink_notification: DrinkNotification | null;
+  last_shot: LastShot | null;
   created_at: number;
 }
 
@@ -50,6 +52,7 @@ function rowToGameData(row: GameRow): GameData {
       byTeam2: row.shots_by_team2 ?? {},
     },
     drinkNotification: row.drink_notification ?? null,
+    lastShot: row.last_shot ?? null,
     createdAt: row.created_at,
   };
 }
@@ -68,7 +71,6 @@ function generateGameId(): string {
 export async function createGame(teamName: string): Promise<string> {
   let gameId: string;
 
-  // Ensure unique ID
   while (true) {
     gameId = generateGameId();
     const { data } = await supabase
@@ -93,6 +95,7 @@ export async function createGame(teamName: string): Promise<string> {
     shots_by_team1: {},
     shots_by_team2: {},
     drink_notification: null,
+    last_shot: null,
     created_at: Date.now(),
   });
 
@@ -123,7 +126,6 @@ export async function placeShips(
   team: TeamId,
   ships: PlacedShip[]
 ): Promise<void> {
-  // Read current state to know if opponent is ready
   const { data } = await supabase
     .from("games")
     .select("team1_ready, team2_ready")
@@ -149,7 +151,6 @@ export async function fireShot(
   shooter: TeamId,
   target: Cell
 ): Promise<void> {
-  // Read current game state
   const { data } = await supabase
     .from("games")
     .select("*")
@@ -167,7 +168,7 @@ export async function fireShot(
   const dbShotsField = shooter === "team1" ? "shots_by_team1" : "shots_by_team2";
   const existingShots = game.shots[shotsField];
 
-  if (existingShots[key]) return; // already shot here
+  if (existingShots[key]) return;
 
   const opponentShips = game[opponent].ships;
   const hitShip = opponentShips.find((ship) =>
@@ -177,7 +178,6 @@ export async function fireShot(
   const result: ShotResult = hitShip ? "hit" : "miss";
   const newShots = { ...existingShots, [key]: result };
 
-  // Check if this shot sinks a ship
   let drinkNotification: DrinkNotification | null = game.drinkNotification;
   if (hitShip && isShipSunk(hitShip, newShots)) {
     drinkNotification = {
@@ -191,6 +191,14 @@ export async function fireShot(
 
   const winner = checkWinner(opponentShips, newShots) ? shooter : null;
 
+  const lastShot: LastShot = {
+    shooter,
+    row: target.row,
+    col: target.col,
+    result,
+    timestamp: Date.now(),
+  };
+
   await supabase
     .from("games")
     .update({
@@ -199,6 +207,7 @@ export async function fireShot(
       winner,
       status: winner ? "finished" : "playing",
       drink_notification: drinkNotification,
+      last_shot: lastShot,
     })
     .eq("id", gameId);
 }
@@ -207,7 +216,6 @@ export function subscribeToGame(
   gameId: string,
   callback: (data: GameData) => void
 ): () => void {
-  // First load — fetch the current state immediately
   supabase
     .from("games")
     .select("*")
@@ -217,7 +225,6 @@ export function subscribeToGame(
       if (data) callback(rowToGameData(data));
     });
 
-  // Then subscribe to real-time changes
   const channel = supabase
     .channel(`game-${gameId}`)
     .on(

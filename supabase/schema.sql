@@ -17,8 +17,12 @@ create table if not exists public.games (
   shots_by_team1      jsonb       not null default '{}',
   shots_by_team2      jsonb       not null default '{}',
   drink_notification  jsonb,
+  last_shot           jsonb,
   created_at          bigint      not null
 );
+
+-- Si la table existe déjà, ajouter la colonne last_shot
+alter table public.games add column if not exists last_shot jsonb;
 
 -- Full row needed in realtime payload
 alter table public.games replica identity full;
@@ -29,12 +33,10 @@ alter publication supabase_realtime add table public.games;
 -- Row Level Security (accès ouvert — jeu entre amis)
 alter table public.games enable row level security;
 
-create policy "Lecture libre"    on public.games for select using (true);
-create policy "Création libre"   on public.games for insert with check (true);
-create policy "Mise à jour libre" on public.games for update using (true);
+drop policy if exists "Lecture libre"      on public.games;
+drop policy if exists "Création libre"     on public.games;
+drop policy if exists "Mise à jour libre"  on public.games;
 
--- Nettoyage automatique des parties > 24h (optionnel)
--- Nécessite pg_cron activé dans Extensions
--- select cron.schedule('cleanup-old-games', '0 * * * *',
---   $$delete from public.games where created_at < extract(epoch from now() - interval '24 hours') * 1000$$
--- );
+create policy "Lecture libre"      on public.games for select using (true);
+create policy "Création libre"     on public.games for insert with check (true);
+create policy "Mise à jour libre"  on public.games for update using (true);

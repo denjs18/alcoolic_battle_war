@@ -34,6 +34,14 @@ export interface TeamData {
   ships: PlacedShip[];
 }
 
+export interface LastShot {
+  shooter: TeamId;
+  row: number;
+  col: number;
+  result: ShotResult;
+  timestamp: number;
+}
+
 export interface GameData {
   status: GameStatus;
   currentTurn: TeamId;
@@ -46,6 +54,7 @@ export interface GameData {
     byTeam2: Record<string, ShotResult>;
   };
   drinkNotification: DrinkNotification | null;
+  lastShot: LastShot | null;
   createdAt: number;
 }
 
