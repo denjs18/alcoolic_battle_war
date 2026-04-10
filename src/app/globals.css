@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0a1628;
+}
+
+html,
+body {
+  background-color: var(--bg);
+  color: #e2e8f0;
+  min-height: 100dvh;
+  overscroll-behavior: none;
+}
+
+/* Prevent tap highlight on mobile */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Grid cells */
+.cell {
+  @apply flex items-center justify-center rounded-sm cursor-pointer select-none transition-colors duration-100;
+}
+
+.cell-ocean {
+  @apply bg-ocean-mid border border-ocean-light;
+}
+
+.cell-ship {
+  @apply bg-slate-500 border border-slate-400;
+}
+
+.cell-hit {
+  @apply bg-red-600 border border-red-400;
+}
+
+.cell-miss {
+  @apply bg-slate-700 border border-slate-500;
+}
+
+.cell-sunk {
+  @apply bg-red-900 border border-red-700;
+}
+
+.cell-preview {
+  @apply bg-cyan-600 border border-cyan-400 opacity-70;
+}
+
+.cell-preview-invalid {
+  @apply bg-red-800 border border-red-600 opacity-70;
+}
+
+.cell-hover {
+  @apply bg-ocean-surface border border-cyan-500;
+}
