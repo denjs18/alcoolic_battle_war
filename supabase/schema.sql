@@ -27,12 +27,15 @@ alter table public.games add column if not exists last_shot jsonb;
 -- Full row needed in realtime payload
 alter table public.games replica identity full;
 
--- Activate realtime for this table (ignoré si déjà membre)
+-- Activate realtime (skip if already member)
 do $$
 begin
-  alter publication supabase_realtime add table public.games;
-exception when duplicate_object then
-  null; -- déjà dans la publication, on ignore
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and tablename = 'games'
+  ) then
+    execute 'alter publication supabase_realtime add table public.games';
+  end if;
 end $$;
 
 -- Row Level Security (accès ouvert — jeu entre amis)
