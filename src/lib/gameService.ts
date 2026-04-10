@@ -1,22 +1,58 @@
-import {
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
-  onSnapshot,
-  Unsubscribe,
-} from "firebase/firestore";
-import { db } from "./firebase";
+import { supabase } from "./supabase";
 import {
   GameData,
   TeamId,
   PlacedShip,
   Cell,
+  DrinkNotification,
+  ShotResult,
   cellKey,
   getOpponent,
   isShipSunk,
   checkWinner,
 } from "@/types/game";
+
+// ─── DB row type (snake_case, flat) ──────────────────────────────────────────
+interface GameRow {
+  id: string;
+  status: string;
+  current_turn: string;
+  winner: string | null;
+  team1_name: string;
+  team1_ready: boolean;
+  team1_ships: PlacedShip[];
+  team2_name: string;
+  team2_ready: boolean;
+  team2_ships: PlacedShip[];
+  shots_by_team1: Record<string, ShotResult>;
+  shots_by_team2: Record<string, ShotResult>;
+  drink_notification: DrinkNotification | null;
+  created_at: number;
+}
+
+function rowToGameData(row: GameRow): GameData {
+  return {
+    status: row.status as GameData["status"],
+    currentTurn: row.current_turn as TeamId,
+    winner: row.winner as TeamId | null,
+    team1: {
+      name: row.team1_name,
+      ready: row.team1_ready,
+      ships: row.team1_ships ?? [],
+    },
+    team2: {
+      name: row.team2_name,
+      ready: row.team2_ready,
+      ships: row.team2_ships ?? [],
+    },
+    shots: {
+      byTeam1: row.shots_by_team1 ?? {},
+      byTeam2: row.shots_by_team2 ?? {},
+    },
+    drinkNotification: row.drink_notification ?? null,
+    createdAt: row.created_at,
+  };
+}
 
 function generateGameId(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -27,44 +63,59 @@ function generateGameId(): string {
   return id;
 }
 
-function gameRef(id: string) {
-  return doc(db, "games", id);
-}
+// ─── Public API ───────────────────────────────────────────────────────────────
 
 export async function createGame(teamName: string): Promise<string> {
   let gameId: string;
+
   // Ensure unique ID
-  do {
+  while (true) {
     gameId = generateGameId();
-  } while ((await getDoc(gameRef(gameId))).exists());
+    const { data } = await supabase
+      .from("games")
+      .select("id")
+      .eq("id", gameId)
+      .maybeSingle();
+    if (!data) break;
+  }
 
-  const initialData: GameData = {
+  const { error } = await supabase.from("games").insert({
+    id: gameId,
     status: "waiting",
-    currentTurn: "team1",
+    current_turn: "team1",
     winner: null,
-    team1: { name: teamName, ready: false, ships: [] },
-    team2: { name: "", ready: false, ships: [] },
-    shots: { byTeam1: {}, byTeam2: {} },
-    drinkNotification: null,
-    createdAt: Date.now(),
-  };
+    team1_name: teamName,
+    team1_ready: false,
+    team1_ships: [],
+    team2_name: "",
+    team2_ready: false,
+    team2_ships: [],
+    shots_by_team1: {},
+    shots_by_team2: {},
+    drink_notification: null,
+    created_at: Date.now(),
+  });
 
-  await setDoc(gameRef(gameId), initialData);
+  if (error) throw new Error(error.message);
   return gameId;
 }
 
 export async function joinGame(gameId: string, teamName: string): Promise<boolean> {
-  const snap = await getDoc(gameRef(gameId));
-  if (!snap.exists()) return false;
+  const { data, error } = await supabase
+    .from("games")
+    .select("status")
+    .eq("id", gameId)
+    .maybeSingle();
 
-  const data = snap.data() as GameData;
+  if (error || !data) return false;
   if (data.status !== "waiting") return false;
 
-  await updateDoc(gameRef(gameId), {
-    "team2.name": teamName,
-    status: "placing",
-  });
-  return true;
+  const { error: updateError } = await supabase
+    .from("games")
+    .update({ team2_name: teamName, status: "placing" })
+    .eq("id", gameId);
+
+  return !updateError;
 }
 
 export async function placeShips(
@@ -72,17 +123,25 @@ export async function placeShips(
   team: TeamId,
   ships: PlacedShip[]
 ): Promise<void> {
-  const snap = await getDoc(gameRef(gameId));
-  const data = snap.data() as GameData;
+  // Read current state to know if opponent is ready
+  const { data } = await supabase
+    .from("games")
+    .select("team1_ready, team2_ready")
+    .eq("id", gameId)
+    .single();
 
   const otherTeam = getOpponent(team);
-  const otherReady = data[otherTeam].ready;
+  const otherReady =
+    otherTeam === "team1" ? data?.team1_ready : data?.team2_ready;
 
-  await updateDoc(gameRef(gameId), {
-    [`${team}.ships`]: ships,
-    [`${team}.ready`]: true,
-    ...(otherReady ? { status: "playing" } : {}),
-  });
+  await supabase
+    .from("games")
+    .update({
+      [`${team === "team1" ? "team1" : "team2"}_ships`]: ships,
+      [`${team === "team1" ? "team1" : "team2"}_ready`]: true,
+      ...(otherReady ? { status: "playing" } : {}),
+    })
+    .eq("id", gameId);
 }
 
 export async function fireShot(
@@ -90,29 +149,36 @@ export async function fireShot(
   shooter: TeamId,
   target: Cell
 ): Promise<void> {
-  const snap = await getDoc(gameRef(gameId));
-  const data = snap.data() as GameData;
+  // Read current game state
+  const { data } = await supabase
+    .from("games")
+    .select("*")
+    .eq("id", gameId)
+    .single<GameRow>();
 
-  if (data.status !== "playing") return;
-  if (data.currentTurn !== shooter) return;
+  if (!data) return;
+  const game = rowToGameData(data);
+  if (game.status !== "playing") return;
+  if (game.currentTurn !== shooter) return;
 
   const opponent = getOpponent(shooter);
   const key = cellKey(target);
   const shotsField = shooter === "team1" ? "byTeam1" : "byTeam2";
-  const existingShots = data.shots[shotsField];
+  const dbShotsField = shooter === "team1" ? "shots_by_team1" : "shots_by_team2";
+  const existingShots = game.shots[shotsField];
 
   if (existingShots[key]) return; // already shot here
 
-  const opponentShips: PlacedShip[] = data[opponent].ships;
+  const opponentShips = game[opponent].ships;
   const hitShip = opponentShips.find((ship) =>
     ship.cells.some((c) => cellKey(c) === key)
   );
 
-  const result = hitShip ? "hit" : "miss";
+  const result: ShotResult = hitShip ? "hit" : "miss";
   const newShots = { ...existingShots, [key]: result };
 
   // Check if this shot sinks a ship
-  let drinkNotification = data.drinkNotification;
+  let drinkNotification: DrinkNotification | null = game.drinkNotification;
   if (hitShip && isShipSunk(hitShip, newShots)) {
     drinkNotification = {
       id: `${Date.now()}`,
@@ -123,25 +189,54 @@ export async function fireShot(
     };
   }
 
-  // Check win condition
   const winner = checkWinner(opponentShips, newShots) ? shooter : null;
 
-  await updateDoc(gameRef(gameId), {
-    [`shots.${shotsField}`]: newShots,
-    currentTurn: opponent,
-    winner,
-    status: winner ? "finished" : "playing",
-    drinkNotification,
-  });
+  await supabase
+    .from("games")
+    .update({
+      [dbShotsField]: newShots,
+      current_turn: opponent,
+      winner,
+      status: winner ? "finished" : "playing",
+      drink_notification: drinkNotification,
+    })
+    .eq("id", gameId);
 }
 
 export function subscribeToGame(
   gameId: string,
   callback: (data: GameData) => void
-): Unsubscribe {
-  return onSnapshot(gameRef(gameId), (snap) => {
-    if (snap.exists()) {
-      callback(snap.data() as GameData);
-    }
-  });
+): () => void {
+  // First load — fetch the current state immediately
+  supabase
+    .from("games")
+    .select("*")
+    .eq("id", gameId)
+    .single<GameRow>()
+    .then(({ data }) => {
+      if (data) callback(rowToGameData(data));
+    });
+
+  // Then subscribe to real-time changes
+  const channel = supabase
+    .channel(`game-${gameId}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "games",
+        filter: `id=eq.${gameId}`,
+      },
+      (payload) => {
+        if (payload.new) {
+          callback(rowToGameData(payload.new as GameRow));
+        }
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
