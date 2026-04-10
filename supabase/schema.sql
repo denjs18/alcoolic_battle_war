@@ -27,8 +27,13 @@ alter table public.games add column if not exists last_shot jsonb;
 -- Full row needed in realtime payload
 alter table public.games replica identity full;
 
--- Activate realtime for this table
-alter publication supabase_realtime add table public.games;
+-- Activate realtime for this table (ignoré si déjà membre)
+do $$
+begin
+  alter publication supabase_realtime add table public.games;
+exception when duplicate_object then
+  null; -- déjà dans la publication, on ignore
+end $$;
 
 -- Row Level Security (accès ouvert — jeu entre amis)
 alter table public.games enable row level security;
