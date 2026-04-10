@@ -3,39 +3,26 @@
 @tailwind utilities;
 
 /* ─── Naval war theme ──────────────────────────────────────────────────────── */
-:root {
-  --ocean-deepest: #040d1e;
-  --ocean-deep: #0a1628;
-  --ocean-mid: #0d2240;
-  --ocean-light: #1a3a5c;
-  --radar-green: #22c55e;
-  --danger-red: #ef4444;
-  --amber: #f59e0b;
-  --cyan: #06b6d4;
-}
-
 html, body {
-  background-color: var(--ocean-deepest);
+  background-color: #040d1e;
   color: #e2e8f0;
   min-height: 100dvh;
   overscroll-behavior: none;
   font-family: 'Courier New', Courier, monospace;
 }
-
 * { -webkit-tap-highlight-color: transparent; }
 
-/* ─── Animated ocean background ──────────────────────────────────────────── */
 .ocean-bg {
   background:
-    radial-gradient(ellipse at 20% 50%, rgba(6, 182, 212, 0.04) 0%, transparent 60%),
-    radial-gradient(ellipse at 80% 20%, rgba(34, 197, 94, 0.03) 0%, transparent 50%),
-    var(--ocean-deepest);
+    radial-gradient(ellipse at 20% 50%, rgba(6,182,212,0.04) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 20%, rgba(34,197,94,0.03) 0%, transparent 50%),
+    #040d1e;
 }
 
 /* ─── Grid cells ──────────────────────────────────────────────────────────── */
 .cell {
-  @apply flex items-center justify-center rounded-sm select-none transition-all duration-150 relative overflow-hidden;
-  cursor: default;
+  @apply flex items-center justify-center rounded-sm select-none relative overflow-hidden;
+  transition: background 0.15s, border-color 0.15s;
 }
 
 .cell-ocean {
@@ -48,9 +35,9 @@ html, body {
   border: 1px solid #06b6d4;
   cursor: crosshair;
 }
-
-.cell-ocean-active:active {
-  background: #0e2a4a;
+.cell-ocean-active:hover {
+  background: #0d2a50;
+  border-color: #22d3ee;
 }
 
 .cell-ship {
@@ -58,185 +45,224 @@ html, body {
   border: 1px solid #475569;
 }
 
+/* ── Hit cell: persistent flame flicker ── */
 .cell-hit {
   background: #7f1d1d;
   border: 1px solid #ef4444;
+  animation: flicker-flame 1.8s ease-in-out infinite;
 }
 
 .cell-miss {
-  background: #1e293b;
-  border: 1px solid #334155;
+  background: #1a2d42;
+  border: 1px solid #2a4060;
 }
 
 .cell-sunk {
   background: #450a0a;
   border: 1px solid #b91c1c;
+  animation: flicker-flame 1.8s ease-in-out infinite;
 }
 
-.cell-preview {
-  background: rgba(6, 182, 212, 0.35);
-  border: 1px solid #06b6d4;
-}
+.cell-preview       { background: rgba(6,182,212,0.3); border: 1px solid #06b6d4; }
+.cell-preview-invalid { background: rgba(239,68,68,0.3); border: 1px solid #ef4444; }
 
-.cell-preview-invalid {
-  background: rgba(239, 68, 68, 0.35);
-  border: 1px solid #ef4444;
-}
-
-/* ─── Targeting animation ─────────────────────────────────────────────────── */
+/* ─── Targeting crosshair ─────────────────────────────────────────────────── */
 .cell-targeting {
-  background: #7f1d1d;
+  background: #3f0000;
   border: 2px solid #ef4444;
-  animation: targeting-pulse 0.4s infinite alternate;
   cursor: wait;
+  animation: target-pulse 0.5s ease-in-out infinite alternate;
   z-index: 2;
 }
-
+/* Crosshair lines via pseudo-elements */
 .cell-targeting::before,
 .cell-targeting::after {
   content: '';
   position: absolute;
-  background: #ef4444;
+  background: rgba(239,68,68,0.9);
+  pointer-events: none;
 }
+.cell-targeting::before { width: 100%; height: 1px; top: 50%; left: 0; }
+.cell-targeting::after  { height: 100%; width: 1px;  left: 50%; top: 0; }
 
-.cell-targeting::before {
-  width: 100%;
-  height: 1px;
-  top: 50%;
-  left: 0;
-  animation: crosshair-blink 0.4s infinite alternate;
-}
-
-.cell-targeting::after {
-  height: 100%;
-  width: 1px;
-  left: 50%;
-  top: 0;
-  animation: crosshair-blink 0.4s infinite alternate;
-}
-
-/* ─── Explosion (hit result) ──────────────────────────────────────────────── */
+/* ─── Explosion (hit) — 2s dramatic ─────────────────────────────────────── */
 .cell-exploding {
-  background: #7f1d1d;
-  border: 1px solid #ef4444;
-  animation: explode 0.7s ease-out forwards;
+  border: 2px solid #f97316;
+  animation: explode-dramatic 2s ease-out forwards;
+  z-index: 3;
 }
 
-/* ─── Splash (miss result) ────────────────────────────────────────────────── */
+/* ─── Splash (miss impact) ────────────────────────────────────────────────── */
 .cell-splashing {
-  background: #1e293b;
-  border: 1px solid #334155;
-  animation: splash-in 0.6s ease-out forwards;
+  border: 1px solid #38bdf8;
+  animation: splash-impact 2s ease-out forwards;
+  z-index: 3;
+}
+
+/* ─── Wave ripple across board (miss) — delay set inline ─────────────────── */
+.cell-waving {
+  animation: wave-ripple 1.0s ease-out both;
 }
 
 /* ─── Keyframes ───────────────────────────────────────────────────────────── */
-@keyframes targeting-pulse {
-  from { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.8), inset 0 0 8px rgba(239, 68, 68, 0.3); }
-  to   { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0), inset 0 0 16px rgba(239, 68, 68, 0.5); }
+
+/* Persistent flame on hit cells */
+@keyframes flicker-flame {
+  0%, 100% {
+    box-shadow: inset 0 0 6px #ef4444, 0 0 3px #f97316;
+    background: #7f1d1d;
+  }
+  25% {
+    box-shadow: inset 0 0 12px #f97316, 0 0 8px #fbbf24;
+    background: #991b1b;
+  }
+  50% {
+    box-shadow: inset 0 0 8px #dc2626, 0 0 5px #f97316;
+    background: #7f1d1d;
+  }
+  75% {
+    box-shadow: inset 0 0 16px #fbbf24, 0 0 3px #ef4444;
+    background: #881a1a;
+  }
 }
 
-@keyframes crosshair-blink {
-  from { opacity: 1; }
-  to   { opacity: 0.2; }
+/* Targeting pulse */
+@keyframes target-pulse {
+  from {
+    box-shadow: 0 0 0 0 rgba(239,68,68,0.8), inset 0 0 6px rgba(239,68,68,0.2);
+  }
+  to {
+    box-shadow: 0 0 0 8px rgba(239,68,68,0), inset 0 0 14px rgba(239,68,68,0.4);
+  }
 }
 
-@keyframes explode {
-  0%   { transform: scale(0.8); background: #fbbf24; box-shadow: 0 0 0 0 rgba(251,191,36,0.9); }
-  30%  { transform: scale(1.15); background: #ef4444; box-shadow: 0 0 0 8px rgba(239,68,68,0.4); }
-  60%  { transform: scale(1.05); background: #b91c1c; box-shadow: 0 0 0 4px rgba(185,28,28,0.2); }
-  100% { transform: scale(1);    background: #7f1d1d; box-shadow: none; }
+/* Big dramatic explosion — 2 seconds */
+@keyframes explode-dramatic {
+  0%   {
+    transform: scale(0.4);
+    background: #ffffff;
+    box-shadow: 0 0 0 0 rgba(255,255,255,1), inset 0 0 30px #fff;
+    border-color: #fff;
+  }
+  10%  {
+    transform: scale(1.6);
+    background: #fbbf24;
+    box-shadow: 0 0 0 16px rgba(251,191,36,0.6), inset 0 0 20px #fbbf24;
+    border-color: #fbbf24;
+  }
+  25%  {
+    transform: scale(1.35);
+    background: #f97316;
+    box-shadow: 0 0 0 10px rgba(249,115,22,0.4), inset 0 0 16px #f97316;
+  }
+  45%  {
+    transform: scale(1.15);
+    background: #ef4444;
+    box-shadow: 0 0 0 6px rgba(239,68,68,0.2), inset 0 0 12px #dc2626;
+  }
+  70%  {
+    transform: scale(1.05);
+    background: #b91c1c;
+    box-shadow: inset 0 0 10px #ef4444, 0 0 4px #f97316;
+  }
+  100% {
+    transform: scale(1);
+    background: #7f1d1d;
+    box-shadow: inset 0 0 8px #ef4444, 0 0 3px #f97316;
+    border-color: #ef4444;
+  }
 }
 
-@keyframes splash-in {
-  0%   { transform: scale(0.6); background: #0ea5e9; box-shadow: 0 0 0 0 rgba(14,165,233,0.8); }
-  40%  { transform: scale(1.1); background: #0284c7; box-shadow: 0 0 0 6px rgba(14,165,233,0.3); }
-  100% { transform: scale(1);   background: #1e293b; box-shadow: none; }
+/* Splash at impact — 2 seconds */
+@keyframes splash-impact {
+  0%   {
+    transform: scale(1.5);
+    background: #e0f2fe;
+    box-shadow: 0 0 0 0 rgba(224,242,254,0.9), inset 0 0 20px #7dd3fc;
+  }
+  15%  {
+    transform: scale(1.25);
+    background: #38bdf8;
+    box-shadow: 0 0 0 14px rgba(56,189,248,0.4);
+  }
+  40%  {
+    transform: scale(1.1);
+    background: #0ea5e9;
+    box-shadow: 0 0 0 8px rgba(14,165,233,0.2);
+  }
+  70%  {
+    transform: scale(1.03);
+    background: #0369a1;
+    box-shadow: 0 0 0 3px rgba(3,105,161,0.1);
+  }
+  100% {
+    transform: scale(1);
+    background: #1a2d42;
+    box-shadow: none;
+    border-color: #2a4060;
+  }
 }
 
-@keyframes slide-up {
-  from { transform: translateY(30px); opacity: 0; }
-  to   { transform: translateY(0);    opacity: 1; }
+/* Wave ripple spreading from miss point */
+@keyframes wave-ripple {
+  0%   { background: #0a1f3d; border-color: #1a3a5c; }
+  30%  {
+    background: #075985;
+    border-color: #0ea5e9;
+    transform: scale(1.06);
+    box-shadow: inset 0 0 4px #38bdf8;
+  }
+  65%  {
+    background: #0c4a6e;
+    border-color: #0284c7;
+    transform: scale(1.02);
+  }
+  100% { background: #0a1f3d; border-color: #1a3a5c; transform: scale(1); }
 }
 
-@keyframes slide-down {
-  from { transform: translateY(-30px); opacity: 0; }
-  to   { transform: translateY(0);     opacity: 1; }
-}
-
-@keyframes fade-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
+/* Slide animations */
+@keyframes slide-up   { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes slide-down { from { transform: translateY(-24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes fade-in    { from { opacity: 0; } to { opacity: 1; } }
 
 @keyframes alert-flash {
   0%, 100% { opacity: 1; }
-  50%       { opacity: 0.6; }
+  50%       { opacity: 0.55; }
 }
 
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
-  15%       { transform: translateX(-6px) rotate(-1deg); }
-  30%       { transform: translateX(6px)  rotate(1deg); }
-  45%       { transform: translateX(-4px); }
-  60%       { transform: translateX(4px); }
-  75%       { transform: translateX(-2px); }
-}
-
-@keyframes radar-ping {
-  0%   { transform: scale(0.8); opacity: 1; }
-  100% { transform: scale(2.5); opacity: 0; }
-}
-
-@keyframes turn-alert {
-  0%   { box-shadow: 0 0 0 0 rgba(34,197,94,0.6); }
-  70%  { box-shadow: 0 0 0 16px rgba(34,197,94,0); }
-  100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
-}
-
-@keyframes incoming-alert {
-  0%   { box-shadow: 0 0 0 0 rgba(239,68,68,0.8); }
-  70%  { box-shadow: 0 0 0 20px rgba(239,68,68,0); }
-  100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+  15%  { transform: translateX(-7px) rotate(-1.5deg); }
+  30%  { transform: translateX(7px)  rotate(1.5deg); }
+  45%  { transform: translateX(-5px); }
+  60%  { transform: translateX(5px); }
+  75%  { transform: translateX(-2px); }
 }
 
 @keyframes drift {
   0%, 100% { transform: translateY(0px); }
-  50%       { transform: translateY(-4px); }
+  50%       { transform: translateY(-5px); }
 }
 
-@keyframes scanline {
-  from { background-position: 0 0; }
-  to   { background-position: 0 100%; }
+@keyframes turn-alert {
+  0%   { box-shadow: 0 0 0 0 rgba(34,197,94,0.5); }
+  70%  { box-shadow: 0 0 0 14px rgba(34,197,94,0); }
+  100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
 }
 
-/* ─── Utility animation classes ───────────────────────────────────────────── */
-.animate-slide-up   { animation: slide-up   0.35s ease-out both; }
-.animate-slide-down { animation: slide-down 0.35s ease-out both; }
-.animate-fade-in    { animation: fade-in    0.3s ease both; }
-.animate-shake      { animation: shake      0.5s ease; }
-.animate-drift      { animation: drift      3s ease-in-out infinite; }
-.animate-alert-flash{ animation: alert-flash 0.6s ease infinite; }
-
-.animate-turn-alert    { animation: turn-alert    1.5s ease infinite; }
-.animate-incoming-alert{ animation: incoming-alert 0.8s ease infinite; }
-
-/* ─── Scanline overlay (optional retro CRT feel) ─────────────────────────── */
-.scanlines::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(
-    to bottom,
-    transparent 0px,
-    transparent 3px,
-    rgba(0,0,0,0.08) 3px,
-    rgba(0,0,0,0.08) 4px
-  );
-  pointer-events: none;
-  z-index: 10;
+@keyframes incoming-alert {
+  0%   { box-shadow: 0 0 0 0 rgba(239,68,68,0.7); }
+  70%  { box-shadow: 0 0 0 20px rgba(239,68,68,0); }
+  100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
 }
 
-/* ─── Drink alert shake ───────────────────────────────────────────────────── */
-.drink-shake {
-  animation: shake 0.5s ease 0.3s 3;
-}
+/* ─── Utility classes ─────────────────────────────────────────────────────── */
+.animate-slide-up      { animation: slide-up   0.35s ease-out both; }
+.animate-slide-down    { animation: slide-down 0.35s ease-out both; }
+.animate-fade-in       { animation: fade-in    0.3s ease both; }
+.animate-shake         { animation: shake 0.55s ease; }
+.animate-drift         { animation: drift 3s ease-in-out infinite; }
+.animate-alert-flash   { animation: alert-flash 0.7s ease infinite; }
+.animate-turn-alert    { animation: turn-alert 1.8s ease infinite; }
+.animate-incoming-alert{ animation: incoming-alert 0.9s ease infinite; }
+.drink-shake           { animation: shake 0.55s ease 0.3s 3; }

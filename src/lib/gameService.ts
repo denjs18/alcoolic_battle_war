@@ -150,17 +150,17 @@ export async function fireShot(
   gameId: string,
   shooter: TeamId,
   target: Cell
-): Promise<void> {
+): Promise<ShotResult | null> {
   const { data } = await supabase
     .from("games")
     .select("*")
     .eq("id", gameId)
     .single<GameRow>();
 
-  if (!data) return;
+  if (!data) return null;
   const game = rowToGameData(data);
-  if (game.status !== "playing") return;
-  if (game.currentTurn !== shooter) return;
+  if (game.status !== "playing") return null;
+  if (game.currentTurn !== shooter) return null;
 
   const opponent = getOpponent(shooter);
   const key = cellKey(target);
@@ -168,7 +168,7 @@ export async function fireShot(
   const dbShotsField = shooter === "team1" ? "shots_by_team1" : "shots_by_team2";
   const existingShots = game.shots[shotsField];
 
-  if (existingShots[key]) return;
+  if (existingShots[key]) return null;
 
   const opponentShips = game[opponent].ships;
   const hitShip = opponentShips.find((ship) =>
@@ -210,6 +210,8 @@ export async function fireShot(
       last_shot: lastShot,
     })
     .eq("id", gameId);
+
+  return result;
 }
 
 export function subscribeToGame(
