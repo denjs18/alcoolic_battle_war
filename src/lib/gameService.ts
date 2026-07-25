@@ -126,22 +126,14 @@ export async function placeShips(
   team: TeamId,
   ships: PlacedShip[]
 ): Promise<void> {
-  const { data } = await supabase
-    .from("games")
-    .select("team1_ready, team2_ready")
-    .eq("id", gameId)
-    .single();
-
-  const otherTeam = getOpponent(team);
-  const otherReady =
-    otherTeam === "team1" ? data?.team1_ready : data?.team2_ready;
-
+  const prefix = team === "team1" ? "team1" : "team2";
+  // Le trigger PostgreSQL auto_start_game gère le passage à status='playing'
+  // quand les deux équipes sont prêtes — pas de race condition possible.
   await supabase
     .from("games")
     .update({
-      [`${team === "team1" ? "team1" : "team2"}_ships`]: ships,
-      [`${team === "team1" ? "team1" : "team2"}_ready`]: true,
-      ...(otherReady ? { status: "playing" } : {}),
+      [`${prefix}_ships`]: ships,
+      [`${prefix}_ready`]: true,
     })
     .eq("id", gameId);
 }
@@ -214,38 +206,42 @@ export async function fireShot(
   return result;
 }
 
-export function subscribeToGame(
-  gameId: string,
-  callback: (data: GameData) => void
-): () => void {
-  supabase
+async function fetchGame(gameId: string): Promise<GameData | null> {
+  const { data } = await supabase
     .from("games")
     .select("*")
     .eq("id", gameId)
-    .single<GameRow>()
-    .then(({ data }) => {
-      if (data) callback(rowToGameData(data));
-    });
+    .single<GameRow>();
+  return data ? rowToGameData(data) : null;
+}
+
+export function subscribeToGame(
+  gameId: string,
+  callback: (data: GameData) => void,
+  onConnectionChange?: (connected: boolean) => void
+): () => void {
+  // Fetch immédiat
+  fetchGame(gameId).then((d) => { if (d) callback(d); });
 
   const channel = supabase
     .channel(`game-${gameId}`)
     .on(
       "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "games",
-        filter: `id=eq.${gameId}`,
-      },
+      { event: "*", schema: "public", table: "games", filter: `id=eq.${gameId}` },
       (payload) => {
-        if (payload.new) {
-          callback(rowToGameData(payload.new as GameRow));
-        }
+        if (payload.new) callback(rowToGameData(payload.new as GameRow));
       }
     )
-    .subscribe();
+    .subscribe((status) => {
+      if (status === "SUBSCRIBED") {
+        onConnectionChange?.(true);
+        // Re-fetch à la reconnexion pour récupérer les updates manqués
+        fetchGame(gameId).then((d) => { if (d) callback(d); });
+      }
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+        onConnectionChange?.(false);
+      }
+    });
 
-  return () => {
-    supabase.removeChannel(channel);
-  };
+  return () => { supabase.removeChannel(channel); };
 }

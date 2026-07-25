@@ -1,8 +1,10 @@
 -- ============================================================
---  Alcoolic Battle War — Supabase schema
---  À exécuter dans : Supabase Dashboard > SQL Editor
+--  Alcoolic Battle War — Supabase schema complet
+--  Exécuter dans : Supabase Dashboard > SQL Editor
+--  Safe à relancer : utilise IF NOT EXISTS / OR REPLACE
 -- ============================================================
 
+-- 1. Table principale
 create table if not exists public.games (
   id                  text        primary key,
   status              text        not null default 'waiting',
@@ -21,13 +23,13 @@ create table if not exists public.games (
   created_at          bigint      not null
 );
 
--- Si la table existe déjà, ajouter la colonne last_shot
+-- 2. Colonnes ajoutées en v2 (safe si déjà présentes)
 alter table public.games add column if not exists last_shot jsonb;
 
--- Full row needed in realtime payload
+-- 3. Full row dans le payload Realtime
 alter table public.games replica identity full;
 
--- Activate realtime (skip if already member)
+-- 4. Realtime (ignore si déjà membre)
 do $$
 begin
   if not exists (
@@ -38,13 +40,38 @@ begin
   end if;
 end $$;
 
--- Row Level Security (accès ouvert — jeu entre amis)
+-- 5. Row Level Security
 alter table public.games enable row level security;
 
-drop policy if exists "Lecture libre"      on public.games;
-drop policy if exists "Création libre"     on public.games;
-drop policy if exists "Mise à jour libre"  on public.games;
+drop policy if exists "Lecture libre"       on public.games;
+drop policy if exists "Création libre"      on public.games;
+drop policy if exists "Mise à jour libre"   on public.games;
 
-create policy "Lecture libre"      on public.games for select using (true);
-create policy "Création libre"     on public.games for insert with check (true);
-create policy "Mise à jour libre"  on public.games for update using (true);
+create policy "Lecture libre"       on public.games for select using (true);
+create policy "Création libre"      on public.games for insert with check (true);
+create policy "Mise à jour libre"   on public.games for update using (true);
+
+-- 6. Trigger : démarre la partie dès que les deux équipes sont prêtes
+--    (évite la race condition côté client)
+create or replace function public.auto_start_game()
+returns trigger
+language plpgsql
+security definer
+as $$
+begin
+  if new.team1_ready = true
+     and new.team2_ready = true
+     and new.status = 'placing'
+  then
+    new.status := 'playing';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trigger_auto_start on public.games;
+create trigger trigger_auto_start
+  before update of team1_ready, team2_ready
+  on public.games
+  for each row
+  execute function public.auto_start_game();
