@@ -232,7 +232,9 @@ class GameAudioEngine {
     }
 
     // Ocean noise (very subtle)
-    const noise = this.makeNoise(ctx, 9999);
+    // Buffer court en boucle — 9999s = ~1.7Go qui crashait Safari
+    const noise = this.makeNoise(ctx, 2);
+    noise.loop = true;
     const lp = ctx.createBiquadFilter();
     lp.type = "lowpass";
     lp.frequency.value = 300;
